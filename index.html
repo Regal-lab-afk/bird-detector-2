@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bird Detector Laser</title>
+<style>
+  body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #000; color: #fff; font-family: sans-serif; }
+  canvas { border: 1px solid #0f0; margin-top: 10px; }
+  button { margin-top: 10px; padding: 10px 20px; font-size: 1.2em; background: #0f0; border: none; border-radius: 5px; cursor: pointer; }
+  button:hover { background: #0c0; }
+</style>
+</head>
+<body>
+
+<h1>Bird Detector Laser</h1>
+<video id="video" autoplay playsinline style="display:none;"></video>
+<canvas id="canvas" width="640" height="480"></canvas>
+<button id="fireLaser">Fire Laser</button>
+
+<script type="module">
+import { YOLO } from 'https://cdn.jsdelivr.net/npm/@ultralytics/yolov8/dist/yolov8.mjs';
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const fireBtn = document.getElementById('fireLaser');
+
+let laserEvents = [];
+const LASER_DURATION = 350; // ms
+const LASER_COLOR = 'lime';
+const LASER_THICKNESS = 3;
+let detectedCenters = [];
+
+// Initialize YOLO model
+const model = new YOLO({
+    model: 'https://ultralytics.com/assets/models/yolov8n.pt', // public YOLOv8n
+    conf: 0.25
+});
+
+// Access webcam
+navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(stream => video.srcObject = stream)
+    .catch(err => alert('Camera error: ' + err));
+
+function drawLaser(sx, sy, tx, ty, alpha) {
+    ctx.strokeStyle = LASER_COLOR;
+    ctx.lineWidth = LASER_THICKNESS;
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+
+    // Hit point
+    ctx.beginPath();
+    ctx.arc(tx, ty, 8, 0, 2 * Math.PI);
+    ctx.fillStyle = LASER_COLOR;
+    ctx.fill();
+}
+
+async function detectFrame() {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    detectedCenters = [];
+
+    // Run YOLO prediction
+    const results = await model.predict(canvas);
+
+    results.forEach(box => {
+        const [x1, y1, x2, y2] = box.box;
+        const label = box.className || 'bird';
+        if (label.toLowerCase() !== 'bird') return;
+
+        // Draw bounding box + label
+        ctx.strokeStyle = LASER_COLOR;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        ctx.font = '16px sans-serif';
+        ctx.fillStyle = LASER_COLOR;
+        ctx.fillText(label, x1, y1 - 5);
+
+        detectedCenters.push([(x1 + x2) / 2, (y1 + y2) / 2]);
+    });
+
+    // Draw active lasers
+    const now = Date.now();
+    laserEvents = laserEvents.filter(e => e.expires > now);
+    laserEvents.forEach(e => {
+        const alpha = (e.expires - now) / LASER_DURATION;
+        const sx = canvas.width / 2;
+        const sy = canvas.height;
+        drawLaser(sx, sy, e.x, e.y, alpha);
+    });
+
+    requestAnimationFrame(detectFrame);
+}
+
+// Fire laser: target all detected birds
+fireBtn.addEventListener('click', () => {
+    const now = Date.now();
+    const sx = canvas.width / 2;
+    const sy = canvas.height;
+
+    if (detectedCenters.length > 0) {
+        detectedCenters.forEach(([cx, cy]) => {
+            laserEvents.push({ x: cx, y: cy, expires: now + LASER_DURATION });
+        });
+    } else {
+        // If no birds detected, fire to center
+        laserEvents.push({ x: sx, y: sy / 2, expires: now + LASER_DURATION });
+    }
+});
+
+video.addEventListener('loadeddata', detectFrame);
+</script>
+</body>
+</html>
