@@ -13,11 +13,13 @@
 </head>
 <body>
 <h1>Bird Detector Laser</h1>
+<button id="startCameraBtn">Start Camera</button>
 <video id="video" autoplay playsinline style="display:none;"></video>
 <canvas id="canvas" width="640" height="480"></canvas>
 <button id="fireLaser">Fire Laser</button>
 
 <script>
+const startBtn = document.getElementById('startCameraBtn');
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -39,17 +41,17 @@ async function startCamera() {
         video.srcObject = stream;
         await video.play();
         console.log("✅ Camera started");
+        startBtn.style.display = 'none';
     } catch (err) {
         console.error("Camera failed:", err);
         alert("Camera access failed. Make sure you are on HTTPS and allow camera permissions.");
     }
 }
 
-window.addEventListener("DOMContentLoaded", startCamera);
+startBtn.addEventListener('click', startCamera);
 
 // --- SIMULATED DETECTIONS ---
 function generateSimulatedDetections() {
-    // simulate 1-3 birds
     simulatedDetections = [];
     const numBirds = Math.floor(Math.random() * 3) + 1;
     for (let i = 0; i < numBirds; i++) {
@@ -84,7 +86,6 @@ function updateFrame() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
 
-    // generate detections
     generateSimulatedDetections();
 
     // draw green boxes
@@ -97,7 +98,7 @@ function updateFrame() {
         ctx.fillText('bird', d.x, d.y - 5);
     });
 
-    // draw lasers and clean expired
+    // draw lasers
     const now = Date.now();
     laserEvents = laserEvents.filter(e => e.expires > now);
     laserEvents.forEach(e => {
@@ -108,6 +109,7 @@ function updateFrame() {
     requestAnimationFrame(updateFrame);
 }
 
+// --- Fire Laser ---
 fireBtn.addEventListener('click', ()=>{
     const now = Date.now();
     if(simulatedDetections.length > 0){
@@ -119,7 +121,6 @@ fireBtn.addEventListener('click', ()=>{
     }
 });
 
-// --- Start loop ---
 updateFrame();
 </script>
 </body>
