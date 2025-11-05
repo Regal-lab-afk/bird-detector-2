@@ -18,6 +18,10 @@
 <canvas id="canvas" width="640" height="480"></canvas>
 <button id="fireLaser">Fire Laser</button>
 
+<!-- TensorFlow.js + Coco-SSD -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
 <script>
 const startBtn = document.getElementById('startCameraBtn');
 const video = document.getElementById('video');
@@ -29,7 +33,8 @@ let laserEvents = [];
 const LASER_DURATION = 350;
 const LASER_COLOR = 'lime';
 const LASER_THICKNESS = 3;
-let simulatedDetections = [];
+let model;
+let detections = [];
 
 // --- CAMERA ---
 async function startCamera() {
@@ -42,26 +47,16 @@ async function startCamera() {
         await video.play();
         console.log("✅ Camera started");
         startBtn.style.display = 'none';
+        // Load model after camera starts
+        model = await cocoSsd.load();
+        console.log("✅ Model loaded");
     } catch (err) {
-        console.error("Camera failed:", err);
-        alert("Camera access failed. Make sure you are on HTTPS and allow camera permissions.");
+        console.error("Camera or model failed:", err);
+        alert("Camera access failed or model failed to load. Make sure HTTPS is used and permissions are allowed.");
     }
 }
 
 startBtn.addEventListener('click', startCamera);
-
-// --- SIMULATED DETECTIONS ---
-function generateSimulatedDetections() {
-    simulatedDetections = [];
-    const numBirds = Math.floor(Math.random() * 3) + 1;
-    for (let i = 0; i < numBirds; i++) {
-        const w = 50;
-        const h = 50;
-        const x = Math.random() * (canvas.width - w);
-        const y = Math.random() * (canvas.height - h - 50);
-        simulatedDetections.push({x, y, w, h, cx: x+w/2, cy: y+h/2});
-    }
-}
 
 // --- DRAW LASER ---
 function drawLaser(sx, sy, tx, ty, alpha) {
@@ -80,23 +75,26 @@ function drawLaser(sx, sy, tx, ty, alpha) {
     ctx.fill();
 }
 
-// --- MAIN LOOP ---
-function updateFrame() {
-    if(video.readyState === 4){
+// --- DETECTION LOOP ---
+async function detectFrame() {
+    if(video.readyState === 4 && model){
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const predictions = await model.detect(video);
+        detections = [];
+        predictions.forEach(p => {
+            if(p.class.toLowerCase() === 'bird'){
+                const [x, y, w, h] = p.bbox;
+                ctx.strokeStyle = LASER_COLOR;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, w, h);
+                ctx.font = '16px sans-serif';
+                ctx.fillStyle = LASER_COLOR;
+                ctx.fillText('bird', x, y - 5);
+                detections.push({cx: x+w/2, cy: y+h/2});
+            }
+        });
     }
-
-    generateSimulatedDetections();
-
-    // draw green boxes
-    simulatedDetections.forEach(d => {
-        ctx.strokeStyle = LASER_COLOR;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(d.x, d.y, d.w, d.h);
-        ctx.font = '16px sans-serif';
-        ctx.fillStyle = LASER_COLOR;
-        ctx.fillText('bird', d.x, d.y - 5);
-    });
 
     // draw lasers
     const now = Date.now();
@@ -106,14 +104,14 @@ function updateFrame() {
         drawLaser(canvas.width/2, canvas.height, e.cx, e.cy, alpha);
     });
 
-    requestAnimationFrame(updateFrame);
+    requestAnimationFrame(detectFrame);
 }
 
-// --- Fire Laser ---
+// --- FIRE LASER ---
 fireBtn.addEventListener('click', ()=>{
     const now = Date.now();
-    if(simulatedDetections.length > 0){
-        simulatedDetections.forEach(d=>{
+    if(detections.length > 0){
+        detections.forEach(d=>{
             laserEvents.push({cx:d.cx, cy:d.cy, expires: now+LASER_DURATION});
         });
     } else {
@@ -121,7 +119,7 @@ fireBtn.addEventListener('click', ()=>{
     }
 });
 
-updateFrame();
+detectFrame();
 </script>
 </body>
 </html>
