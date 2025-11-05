@@ -12,17 +12,16 @@
 </style>
 </head>
 <body>
-<h1>Bird Detector Laser</h1>
+<h1>Bird Detector Laser (YOLOv8)</h1>
 <button id="startCameraBtn">Start Camera</button>
 <video id="video" autoplay playsinline style="display:none;"></video>
 <canvas id="canvas"></canvas>
 <button id="fireLaser">Fire Laser</button>
 
-<!-- TensorFlow.js + Coco-SSD -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+<!-- YOLOv8.js (Ultralytics) -->
+<script type="module">
+import { YOLO } from 'https://cdn.jsdelivr.net/npm/@ultralytics/yolov8/dist/yolov8.js';
 
-<script>
 const startBtn = document.getElementById('startCameraBtn');
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
@@ -35,7 +34,7 @@ const LASER_COLOR = 'lime';
 const LASER_THICKNESS = 3;
 let model;
 let detections = [];
-const pastDetections = []; // store last 3 frames
+const pastDetections = [];
 
 // --- CAMERA ---
 async function startCamera() {
@@ -47,7 +46,7 @@ async function startCamera() {
         video.srcObject = stream;
 
         video.addEventListener('loadedmetadata', () => {
-            // Set canvas to match camera's natural resolution
+            // maintain camera aspect ratio
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             console.log(`Camera resolution: ${video.videoWidth}x${video.videoHeight}`);
@@ -57,12 +56,12 @@ async function startCamera() {
         console.log("✅ Camera started");
         startBtn.style.display = 'none';
 
-        // Load Coco-SSD model
-        model = await cocoSsd.load();
-        console.log("✅ Model loaded");
+        // Load YOLOv8n model
+        model = await YOLO.load('yolov8n'); // small & fast
+        console.log("✅ YOLOv8 model loaded");
     } catch (err) {
         console.error("Camera or model failed:", err);
-        alert("Camera access failed or model failed to load. Make sure HTTPS is used and permissions are allowed.");
+        alert("Camera or YOLOv8 model failed to load.");
     }
 }
 
@@ -93,17 +92,18 @@ async function detectFrame() {
         const scaleX = canvas.width / video.videoWidth;
         const scaleY = canvas.height / video.videoHeight;
 
-        // detect birds
-        const predictions = await model.detect(video);
+        // --- YOLOv8 detection ---
+        const results = await model.detect(video, { conf: 0.25 }); // detect everything >0.25 confidence
         let frameDetections = [];
-        predictions.forEach(p => {
-            if(p.class.toLowerCase() === 'bird' && p.score > 0.6){
-                const [bx, by, bw, bh] = p.bbox;
-                const x = bx * scaleX;
-                const y = by * scaleY;
-                const w = bw * scaleX;
-                const h = bh * scaleY;
-                frameDetections.push({x, y, w, h, cx: x + w/2, cy: y + h/2});
+        results.forEach(r => {
+            const label = r.class;
+            if(label.toLowerCase() === 'bird') {
+                const [x1,y1,x2,y2] = r.box;
+                const cx = (x1 + x2)/2 * scaleX;
+                const cy = (y1 + y2)/2 * scaleY;
+                const w = (x2 - x1) * scaleX;
+                const h = (y2 - y1) * scaleY;
+                frameDetections.push({x: x1*scaleX, y: y1*scaleY, w, h, cx, cy});
             }
         });
 
@@ -121,11 +121,11 @@ async function detectFrame() {
                     if(dx < 30 && dy < 30) keep = true;
                 });
             });
-            if(keep || pastDetections.length === 1) finalDetections.push(fb); // always keep first frame
+            if(keep || pastDetections.length === 1) finalDetections.push(fb);
         });
         detections = finalDetections;
 
-        // draw green boxes for all birds
+        // draw bounding boxes
         detections.forEach(d => {
             ctx.strokeStyle = LASER_COLOR;
             ctx.lineWidth = 2;
@@ -136,7 +136,7 @@ async function detectFrame() {
         });
     }
 
-    // draw lasers for all birds
+    // draw lasers
     const now = Date.now();
     laserEvents = laserEvents.filter(e => e.expires > now);
     laserEvents.forEach(e => {
@@ -155,7 +155,6 @@ fireBtn.addEventListener('click', ()=>{
             laserEvents.push({cx:d.cx, cy:d.cy, expires: now+LASER_DURATION});
         });
     } else {
-        // If no birds detected, fire to center
         laserEvents.push({cx:canvas.width/2, cy:canvas.height/2, expires: now+LASER_DURATION});
     }
 });
