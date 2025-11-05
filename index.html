@@ -15,7 +15,7 @@
 <h1>Bird Detector Laser</h1>
 <button id="startCameraBtn">Start Camera</button>
 <video id="video" autoplay playsinline style="display:none;"></video>
-<canvas id="canvas" width="640" height="480"></canvas>
+<canvas id="canvas"></canvas>
 <button id="fireLaser">Fire Laser</button>
 
 <!-- TensorFlow.js + Coco-SSD -->
@@ -45,6 +45,14 @@ async function startCamera() {
             audio: false
         });
         video.srcObject = stream;
+
+        video.addEventListener('loadedmetadata', () => {
+            // Set canvas to match camera's natural resolution
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            console.log(`Camera resolution: ${video.videoWidth}x${video.videoHeight}`);
+        });
+
         await video.play();
         console.log("✅ Camera started");
         startBtn.style.display = 'none';
@@ -113,7 +121,7 @@ async function detectFrame() {
                     if(dx < 30 && dy < 30) keep = true;
                 });
             });
-            if(keep || pastDetections.length === 1) finalDetections.push(fb);
+            if(keep || pastDetections.length === 1) finalDetections.push(fb); // always keep first frame
         });
         detections = finalDetections;
 
@@ -140,7 +148,6 @@ async function detectFrame() {
 }
 
 // --- FIRE LASER ---
-// Fires at all detected birds simultaneously
 fireBtn.addEventListener('click', ()=>{
     const now = Date.now();
     if(detections.length > 0){
