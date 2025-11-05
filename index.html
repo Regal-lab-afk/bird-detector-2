@@ -35,6 +35,7 @@ const LASER_COLOR = 'lime';
 const LASER_THICKNESS = 3;
 let model;
 let detections = [];
+const pastDetections = []; // store last 3 frames
 
 // --- CAMERA ---
 async function startCamera() {
@@ -47,7 +48,8 @@ async function startCamera() {
         await video.play();
         console.log("✅ Camera started");
         startBtn.style.display = 'none';
-        // Load model after camera starts
+
+        // Load Coco-SSD model
         model = await cocoSsd.load();
         console.log("✅ Model loaded");
     } catch (err) {
@@ -80,19 +82,43 @@ async function detectFrame() {
     if(video.readyState === 4 && model){
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
+        // detect birds
         const predictions = await model.detect(video);
-        detections = [];
+        let frameDetections = [];
         predictions.forEach(p => {
-            if(p.class.toLowerCase() === 'bird'){
+            if(p.class.toLowerCase() === 'bird' && p.score > 0.6){
                 const [x, y, w, h] = p.bbox;
-                ctx.strokeStyle = LASER_COLOR;
-                ctx.lineWidth = 2;
-                ctx.strokeRect(x, y, w, h);
-                ctx.font = '16px sans-serif';
-                ctx.fillStyle = LASER_COLOR;
-                ctx.fillText('bird', x, y - 5);
-                detections.push({cx: x+w/2, cy: y+h/2});
+                frameDetections.push({x, y, w, h, cx: x+w/2, cy: y+h/2});
             }
+        });
+
+        // --- SMOOTH DETECTIONS OVER LAST 3 FRAMES ---
+        pastDetections.push(frameDetections);
+        if(pastDetections.length > 3) pastDetections.shift();
+
+        // only keep boxes that appear in at least 2 of the last 3 frames
+        const finalDetections = [];
+        frameDetections.forEach(fb => {
+            let count = 0;
+            pastDetections.forEach(frames => {
+                frames.forEach(f => {
+                    const dx = Math.abs(f.cx - fb.cx);
+                    const dy = Math.abs(f.cy - fb.cy);
+                    if(dx < 30 && dy < 30) count++;
+                });
+            });
+            if(count >= 2) finalDetections.push(fb);
+        });
+        detections = finalDetections;
+
+        // draw green boxes
+        detections.forEach(d => {
+            ctx.strokeStyle = LASER_COLOR;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(d.x, d.y, d.w, d.h);
+            ctx.font = '16px sans-serif';
+            ctx.fillStyle = LASER_COLOR;
+            ctx.fillText('bird', d.x, d.y - 5);
         });
     }
 
