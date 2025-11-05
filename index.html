@@ -82,7 +82,6 @@ async function detectFrame() {
     if(video.readyState === 4 && model){
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // --- SCALE FACTORS ---
         const scaleX = canvas.width / video.videoWidth;
         const scaleY = canvas.height / video.videoHeight;
 
@@ -100,26 +99,25 @@ async function detectFrame() {
             }
         });
 
-        // --- SMOOTH DETECTIONS OVER LAST 3 FRAMES ---
+        // --- SMOOTH DETECTIONS PER BIRD ---
         pastDetections.push(frameDetections);
         if(pastDetections.length > 3) pastDetections.shift();
 
-        // only keep boxes that appear in at least 2 of the last 3 frames
         const finalDetections = [];
         frameDetections.forEach(fb => {
-            let count = 0;
+            let keep = false;
             pastDetections.forEach(frames => {
                 frames.forEach(f => {
                     const dx = Math.abs(f.cx - fb.cx);
                     const dy = Math.abs(f.cy - fb.cy);
-                    if(dx < 30 && dy < 30) count++;
+                    if(dx < 30 && dy < 30) keep = true;
                 });
             });
-            if(count >= 2) finalDetections.push(fb);
+            if(keep || pastDetections.length === 1) finalDetections.push(fb);
         });
         detections = finalDetections;
 
-        // draw green boxes
+        // draw green boxes for all birds
         detections.forEach(d => {
             ctx.strokeStyle = LASER_COLOR;
             ctx.lineWidth = 2;
@@ -130,7 +128,7 @@ async function detectFrame() {
         });
     }
 
-    // draw lasers
+    // draw lasers for all birds
     const now = Date.now();
     laserEvents = laserEvents.filter(e => e.expires > now);
     laserEvents.forEach(e => {
@@ -142,6 +140,7 @@ async function detectFrame() {
 }
 
 // --- FIRE LASER ---
+// Fires at all detected birds simultaneously
 fireBtn.addEventListener('click', ()=>{
     const now = Date.now();
     if(detections.length > 0){
@@ -149,6 +148,7 @@ fireBtn.addEventListener('click', ()=>{
             laserEvents.push({cx:d.cx, cy:d.cy, expires: now+LASER_DURATION});
         });
     } else {
+        // If no birds detected, fire to center
         laserEvents.push({cx:canvas.width/2, cy:canvas.height/2, expires: now+LASER_DURATION});
     }
 });
