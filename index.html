@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bird Detector Laser</title>
+<title>Bird Detector Laser (YOLOv8)</title>
 <style>
   body { display:flex; flex-direction: column; align-items:center; background:#000; color:#fff; font-family:sans-serif; margin:0; }
   canvas { border:1px solid #0f0; margin-top:10px; }
@@ -18,10 +18,10 @@
 <canvas id="canvas"></canvas>
 <button id="fireLaser">Fire Laser</button>
 
-<!-- YOLOv8.js (Ultralytics) -->
-<script type="module">
-import { YOLO } from 'https://cdn.jsdelivr.net/npm/@ultralytics/yolov8/dist/yolov8.js';
+<!-- YOLOv8 UMD -->
+<script src="https://cdn.jsdelivr.net/npm/@ultralytics/yolov8/dist/yolov8.min.js"></script>
 
+<script>
 const startBtn = document.getElementById('startCameraBtn');
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
@@ -35,37 +35,6 @@ const LASER_THICKNESS = 3;
 let model;
 let detections = [];
 const pastDetections = [];
-
-// --- CAMERA ---
-async function startCamera() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "environment" },
-            audio: false
-        });
-        video.srcObject = stream;
-
-        video.addEventListener('loadedmetadata', () => {
-            // maintain camera aspect ratio
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            console.log(`Camera resolution: ${video.videoWidth}x${video.videoHeight}`);
-        });
-
-        await video.play();
-        console.log("✅ Camera started");
-        startBtn.style.display = 'none';
-
-        // Load YOLOv8n model
-        model = await YOLO.load('yolov8n'); // small & fast
-        console.log("✅ YOLOv8 model loaded");
-    } catch (err) {
-        console.error("Camera or model failed:", err);
-        alert("Camera or YOLOv8 model failed to load.");
-    }
-}
-
-startBtn.addEventListener('click', startCamera);
 
 // --- DRAW LASER ---
 function drawLaser(sx, sy, tx, ty, alpha) {
@@ -84,20 +53,49 @@ function drawLaser(sx, sy, tx, ty, alpha) {
     ctx.fill();
 }
 
+// --- CAMERA + MODEL ---
+async function startCamera() {
+    try {
+        // Start camera
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment" }, audio: false });
+        video.srcObject = stream;
+
+        // Wait for metadata to set canvas size
+        video.addEventListener('loadedmetadata', async () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            console.log(`Camera resolution: ${video.videoWidth}x${video.videoHeight}`);
+            startBtn.style.display = 'none';
+
+            // Load YOLOv8 model
+            model = await YOLO.load('yolov8n'); // small & fast
+            console.log("✅ YOLOv8 model loaded");
+
+            // Start detection loop
+            detectFrame();
+        });
+
+        await video.play();
+    } catch(err) {
+        console.error("Camera or model failed:", err);
+        alert("Camera access or YOLOv8 load failed. Make sure HTTPS and permissions are allowed.");
+    }
+}
+
+startBtn.addEventListener('click', startCamera);
+
 // --- DETECTION LOOP ---
 async function detectFrame() {
     if(video.readyState === 4 && model){
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
         const scaleX = canvas.width / video.videoWidth;
         const scaleY = canvas.height / video.videoHeight;
 
-        // --- YOLOv8 detection ---
-        const results = await model.detect(video, { conf: 0.25 }); // detect everything >0.25 confidence
+        // YOLOv8 detection
+        const results = await model.detect(video, { conf:0.25 });
         let frameDetections = [];
         results.forEach(r => {
-            const label = r.class;
-            if(label.toLowerCase() === 'bird') {
+            if(r.class.toLowerCase() === 'bird') {
                 const [x1,y1,x2,y2] = r.box;
                 const cx = (x1 + x2)/2 * scaleX;
                 const cy = (y1 + y2)/2 * scaleY;
@@ -116,16 +114,14 @@ async function detectFrame() {
             let keep = false;
             pastDetections.forEach(frames => {
                 frames.forEach(f => {
-                    const dx = Math.abs(f.cx - fb.cx);
-                    const dy = Math.abs(f.cy - fb.cy);
-                    if(dx < 30 && dy < 30) keep = true;
+                    if(Math.abs(f.cx - fb.cx) < 30 && Math.abs(f.cy - fb.cy) < 30) keep = true;
                 });
             });
             if(keep || pastDetections.length === 1) finalDetections.push(fb);
         });
         detections = finalDetections;
 
-        // draw bounding boxes
+        // Draw bounding boxes
         detections.forEach(d => {
             ctx.strokeStyle = LASER_COLOR;
             ctx.lineWidth = 2;
@@ -136,7 +132,7 @@ async function detectFrame() {
         });
     }
 
-    // draw lasers
+    // Draw lasers
     const now = Date.now();
     laserEvents = laserEvents.filter(e => e.expires > now);
     laserEvents.forEach(e => {
@@ -158,8 +154,6 @@ fireBtn.addEventListener('click', ()=>{
         laserEvents.push({cx:canvas.width/2, cy:canvas.height/2, expires: now+LASER_DURATION});
     }
 });
-
-detectFrame();
 </script>
 </body>
 </html>
