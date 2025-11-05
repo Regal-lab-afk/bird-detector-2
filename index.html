@@ -3,66 +3,54 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bird Detector Laser</title>
+<title>Bird Detector Laser (Browser Only)</title>
 <style>
-  body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #000; color: #fff; font-family: sans-serif; }
-  video, canvas { border: 1px solid #0f0; margin-top: 10px; }
-  button { margin-top: 10px; padding: 10px 20px; font-size: 1.2em; background: #0f0; border: none; border-radius: 5px; cursor: pointer; }
-  button:hover { background: #0c0; }
+  body { display:flex; flex-direction: column; align-items:center; background:#000; color:#fff; font-family:sans-serif; margin:0; }
+  canvas { border:1px solid #0f0; margin-top:10px; }
+  button { margin-top:10px; padding:10px 20px; font-size:1.2em; border:none; border-radius:5px; cursor:pointer; background:#0f0; }
+  button:hover { background:#0c0; }
 </style>
 </head>
 <body>
-
 <h1>Bird Detector Laser</h1>
-<video id="video" autoplay playsinline width="640" height="480"></video>
+<video id="video" autoplay playsinline style="display:none;"></video>
 <canvas id="canvas" width="640" height="480"></canvas>
 <button id="fireLaser">Fire Laser</button>
 
-<script type="module">
-import { YOLO } from 'https://cdn.jsdelivr.net/npm/@ultralytics/yolov8/dist/yolov8.mjs';
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
+<script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const fireBtn = document.getElementById('fireLaser');
 
+let model;
+let detections = [];
 let laserEvents = [];
-let detectedCenters = [];
 const LASER_DURATION = 350;
 const LASER_COLOR = 'lime';
 const LASER_THICKNESS = 3;
 
-// Initialize YOLO
-const model = new YOLO({
-    model: 'https://ultralytics.com/assets/models/yolov8n.pt',
-    conf: 0.25
-});
-
-// --- CAMERA HANDLING ---
+// --- Camera access ---
 async function startCamera() {
     try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
-
-        let constraints = { video: { width: 640, height: 480, facingMode: "environment" }, audio: false };
-
-        if (videoDevices.length > 0) {
-            constraints.video.deviceId = { exact: videoDevices[0].deviceId };
-        }
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment" }, audio: false });
         video.srcObject = stream;
         await video.play();
-        console.log("✅ Camera started:", videoDevices.length > 0 ? videoDevices[0].label : "default");
     } catch (err) {
-        console.error("Camera error:", err);
-        alert("Camera access failed. Make sure you are on HTTPS and allow camera permissions.");
+        alert("Camera access failed: " + err);
     }
 }
 
-startCamera();
+// --- Load Coco-SSD model ---
+async function loadModel() {
+    model = await cocoSsd.load();
+    console.log("✅ Model loaded");
+}
 
-// --- LASER DRAWING ---
+// --- Draw laser ---
 function drawLaser(sx, sy, tx, ty, alpha) {
     ctx.strokeStyle = LASER_COLOR;
     ctx.lineWidth = LASER_THICKNESS;
@@ -73,64 +61,55 @@ function drawLaser(sx, sy, tx, ty, alpha) {
     ctx.stroke();
     ctx.globalAlpha = 1.0;
 
-    // Hit point
     ctx.beginPath();
-    ctx.arc(tx, ty, 8, 0, 2 * Math.PI);
+    ctx.arc(tx, ty, 8, 0, 2*Math.PI);
     ctx.fillStyle = LASER_COLOR;
     ctx.fill();
 }
 
-// --- MAIN DETECTION LOOP ---
+// --- Main loop ---
 async function detectFrame() {
-    if (video.readyState === 4) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    detectedCenters = [];
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    detections = [];
 
-    const results = await model.predict(canvas);
-
-    results.forEach(box => {
-        const [x1, y1, x2, y2] = box.box;
-        const label = box.className || 'bird';
-        if (label.toLowerCase() !== 'bird') return;
-
-        // Draw bounding box + label
-        ctx.strokeStyle = LASER_COLOR;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-        ctx.font = '16px sans-serif';
-        ctx.fillStyle = LASER_COLOR;
-        ctx.fillText(label, x1, y1 - 5);
-
-        detectedCenters.push([(x1 + x2) / 2, (y1 + y2) / 2]);
-    });
+    if(model){
+        const preds = await model.detect(canvas);
+        preds.forEach(p => {
+            if(p.class.toLowerCase() === "bird"){
+                const [x, y, w, h] = p.bbox;
+                ctx.strokeStyle = LASER_COLOR;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, w, h);
+                ctx.fillStyle = LASER_COLOR;
+                ctx.fillText("bird", x, y-5);
+                detections.push({cx: x+w/2, cy: y+h/2});
+            }
+        });
+    }
 
     const now = Date.now();
     laserEvents = laserEvents.filter(e => e.expires > now);
     laserEvents.forEach(e => {
         const alpha = (e.expires - now) / LASER_DURATION;
-        const sx = canvas.width / 2;
-        const sy = canvas.height;
-        drawLaser(sx, sy, e.x, e.y, alpha);
+        drawLaser(canvas.width/2, canvas.height, e.cx, e.cy, alpha);
     });
 
     requestAnimationFrame(detectFrame);
 }
 
-// --- FIRE LASER BUTTON ---
+// --- Fire Laser button ---
 fireBtn.addEventListener('click', () => {
     const now = Date.now();
-    const sx = canvas.width / 2;
-    const sy = canvas.height;
-
-    if (detectedCenters.length > 0) {
-        detectedCenters.forEach(([cx, cy]) => {
-            laserEvents.push({ x: cx, y: cy, expires: now + LASER_DURATION });
-        });
+    if(detections.length>0){
+        detections.forEach(d=>laserEvents.push({cx:d.cx, cy:d.cy, expires: now+LASER_DURATION}));
     } else {
-        laserEvents.push({ x: sx, y: sy / 2, expires: now + LASER_DURATION });
+        laserEvents.push({cx: canvas.width/2, cy: canvas.height/2, expires: now+LASER_DURATION});
     }
 });
 
-video.addEventListener('loadeddata', detectFrame);
+// --- Start ---
+startCamera();
+loadModel().then(detectFrame);
 </script>
 </body>
 </html>
