@@ -6,7 +6,7 @@
 <title>Bird Detector Laser</title>
 <style>
   body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #000; color: #fff; font-family: sans-serif; }
-  canvas { border: 1px solid #0f0; margin-top: 10px; }
+  video, canvas { border: 1px solid #0f0; margin-top: 10px; }
   button { margin-top: 10px; padding: 10px 20px; font-size: 1.2em; background: #0f0; border: none; border-radius: 5px; cursor: pointer; }
   button:hover { background: #0c0; }
 </style>
@@ -14,7 +14,7 @@
 <body>
 
 <h1>Bird Detector Laser</h1>
-<video id="video" autoplay playsinline style="display:none;"></video>
+<video id="video" autoplay playsinline width="640" height="480"></video>
 <canvas id="canvas" width="640" height="480"></canvas>
 <button id="fireLaser">Fire Laser</button>
 
@@ -27,22 +27,42 @@ const ctx = canvas.getContext('2d');
 const fireBtn = document.getElementById('fireLaser');
 
 let laserEvents = [];
-const LASER_DURATION = 350; // ms
+let detectedCenters = [];
+const LASER_DURATION = 350;
 const LASER_COLOR = 'lime';
 const LASER_THICKNESS = 3;
-let detectedCenters = [];
 
-// Initialize YOLO model
+// Initialize YOLO
 const model = new YOLO({
-    model: 'https://ultralytics.com/assets/models/yolov8n.pt', // public YOLOv8n
+    model: 'https://ultralytics.com/assets/models/yolov8n.pt',
     conf: 0.25
 });
 
-// Access webcam
-navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-    .then(stream => video.srcObject = stream)
-    .catch(err => alert('Camera error: ' + err));
+// --- CAMERA HANDLING ---
+async function startCamera() {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
+        let constraints = { video: { width: 640, height: 480, facingMode: "environment" }, audio: false };
+
+        if (videoDevices.length > 0) {
+            constraints.video.deviceId = { exact: videoDevices[0].deviceId };
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        await video.play();
+        console.log("✅ Camera started:", videoDevices.length > 0 ? videoDevices[0].label : "default");
+    } catch (err) {
+        console.error("Camera error:", err);
+        alert("Camera access failed. Make sure you are on HTTPS and allow camera permissions.");
+    }
+}
+
+startCamera();
+
+// --- LASER DRAWING ---
 function drawLaser(sx, sy, tx, ty, alpha) {
     ctx.strokeStyle = LASER_COLOR;
     ctx.lineWidth = LASER_THICKNESS;
@@ -60,11 +80,11 @@ function drawLaser(sx, sy, tx, ty, alpha) {
     ctx.fill();
 }
 
+// --- MAIN DETECTION LOOP ---
 async function detectFrame() {
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    if (video.readyState === 4) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     detectedCenters = [];
 
-    // Run YOLO prediction
     const results = await model.predict(canvas);
 
     results.forEach(box => {
@@ -83,7 +103,6 @@ async function detectFrame() {
         detectedCenters.push([(x1 + x2) / 2, (y1 + y2) / 2]);
     });
 
-    // Draw active lasers
     const now = Date.now();
     laserEvents = laserEvents.filter(e => e.expires > now);
     laserEvents.forEach(e => {
@@ -96,7 +115,7 @@ async function detectFrame() {
     requestAnimationFrame(detectFrame);
 }
 
-// Fire laser: target all detected birds
+// --- FIRE LASER BUTTON ---
 fireBtn.addEventListener('click', () => {
     const now = Date.now();
     const sx = canvas.width / 2;
@@ -107,7 +126,6 @@ fireBtn.addEventListener('click', () => {
             laserEvents.push({ x: cx, y: cy, expires: now + LASER_DURATION });
         });
     } else {
-        // If no birds detected, fire to center
         laserEvents.push({ x: sx, y: sy / 2, expires: now + LASER_DURATION });
     }
 });
