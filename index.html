@@ -82,13 +82,21 @@ async function detectFrame() {
     if(video.readyState === 4 && model){
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
+        // --- SCALE FACTORS ---
+        const scaleX = canvas.width / video.videoWidth;
+        const scaleY = canvas.height / video.videoHeight;
+
         // detect birds
         const predictions = await model.detect(video);
         let frameDetections = [];
         predictions.forEach(p => {
             if(p.class.toLowerCase() === 'bird' && p.score > 0.6){
-                const [x, y, w, h] = p.bbox;
-                frameDetections.push({x, y, w, h, cx: x+w/2, cy: y+h/2});
+                const [bx, by, bw, bh] = p.bbox;
+                const x = bx * scaleX;
+                const y = by * scaleY;
+                const w = bw * scaleX;
+                const h = bh * scaleY;
+                frameDetections.push({x, y, w, h, cx: x + w/2, cy: y + h/2});
             }
         });
 
