@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bird Detector Laser (YOLOv8)</title>
+<title>Bird Detector Laser</title>
 <style>
   body { display:flex; flex-direction: column; align-items:center; background:#000; color:#fff; font-family:sans-serif; margin:0; }
   canvas { border:1px solid #0f0; margin-top:10px; }
@@ -12,14 +12,15 @@
 </style>
 </head>
 <body>
-<h1>Bird Detector Laser (YOLOv8)</h1>
+<h1>Bird Detector Laser (Coco-SSD)</h1>
 <button id="startCameraBtn">Start Camera</button>
 <video id="video" autoplay playsinline style="display:none;"></video>
 <canvas id="canvas"></canvas>
 <button id="fireLaser">Fire Laser</button>
 
-<!-- YOLOv8 UMD -->
-<script src="https://cdn.jsdelivr.net/npm/@ultralytics/yolov8/dist/yolov8.min.js"></script>
+<!-- TensorFlow.js + Coco-SSD -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
 <script>
 const startBtn = document.getElementById('startCameraBtn');
@@ -36,8 +37,34 @@ let model;
 let detections = [];
 const pastDetections = [];
 
+// --- CAMERA ---
+async function startCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' }, audio:false });
+        video.srcObject = stream;
+
+        video.addEventListener('loadedmetadata', async () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            console.log(`Camera resolution: ${video.videoWidth}x${video.videoHeight}`);
+            startBtn.style.display = 'none';
+
+            // Load Coco-SSD
+            model = await cocoSsd.load();
+            console.log("✅ Coco-SSD loaded");
+
+            detectFrame(); // start detection loop
+        });
+
+        await video.play();
+    } catch(err) {
+        console.error("Camera or model failed:", err);
+        alert("Camera access or model load failed. Make sure HTTPS and permissions are allowed.");
+    }
+}
+
 // --- DRAW LASER ---
-function drawLaser(sx, sy, tx, ty, alpha) {
+function drawLaser(sx, sy, tx, ty, alpha){
     ctx.strokeStyle = LASER_COLOR;
     ctx.lineWidth = LASER_THICKNESS;
     ctx.globalAlpha = alpha;
@@ -53,90 +80,53 @@ function drawLaser(sx, sy, tx, ty, alpha) {
     ctx.fill();
 }
 
-// --- CAMERA + MODEL ---
-async function startCamera() {
-    try {
-        // Start camera
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment" }, audio: false });
-        video.srcObject = stream;
-
-        // Wait for metadata to set canvas size
-        video.addEventListener('loadedmetadata', async () => {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            console.log(`Camera resolution: ${video.videoWidth}x${video.videoHeight}`);
-            startBtn.style.display = 'none';
-
-            // Load YOLOv8 model
-            model = await YOLO.load('yolov8n'); // small & fast
-            console.log("✅ YOLOv8 model loaded");
-
-            // Start detection loop
-            detectFrame();
-        });
-
-        await video.play();
-    } catch(err) {
-        console.error("Camera or model failed:", err);
-        alert("Camera access or YOLOv8 load failed. Make sure HTTPS and permissions are allowed.");
-    }
-}
-
-startBtn.addEventListener('click', startCamera);
-
 // --- DETECTION LOOP ---
-async function detectFrame() {
-    if(video.readyState === 4 && model){
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const scaleX = canvas.width / video.videoWidth;
-        const scaleY = canvas.height / video.videoHeight;
-
-        // YOLOv8 detection
-        const results = await model.detect(video, { conf:0.25 });
+async function detectFrame(){
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    if(model){
+        const predictions = await model.detect(video);
         let frameDetections = [];
-        results.forEach(r => {
-            if(r.class.toLowerCase() === 'bird') {
-                const [x1,y1,x2,y2] = r.box;
-                const cx = (x1 + x2)/2 * scaleX;
-                const cy = (y1 + y2)/2 * scaleY;
-                const w = (x2 - x1) * scaleX;
-                const h = (y2 - y1) * scaleY;
-                frameDetections.push({x: x1*scaleX, y: y1*scaleY, w, h, cx, cy});
+        predictions.forEach(p=>{
+            if(p.class.toLowerCase() === 'bird' && p.score > 0.4){
+                const {bbox} = p; // [x, y, width, height]
+                const [x, y, w, h] = bbox;
+                const cx = x + w/2;
+                const cy = y + h/2;
+                frameDetections.push({x, y, w, h, cx, cy});
             }
         });
 
-        // --- SMOOTH DETECTIONS PER BIRD ---
+        // --- SMOOTH DETECTIONS ---
         pastDetections.push(frameDetections);
         if(pastDetections.length > 3) pastDetections.shift();
-
         const finalDetections = [];
-        frameDetections.forEach(fb => {
-            let keep = false;
-            pastDetections.forEach(frames => {
-                frames.forEach(f => {
-                    if(Math.abs(f.cx - fb.cx) < 30 && Math.abs(f.cy - fb.cy) < 30) keep = true;
+        frameDetections.forEach(fb=>{
+            let keep=false;
+            pastDetections.forEach(frames=>{
+                frames.forEach(f=>{
+                    if(Math.abs(f.cx - fb.cx)<30 && Math.abs(f.cy - fb.cy)<30) keep=true;
                 });
             });
-            if(keep || pastDetections.length === 1) finalDetections.push(fb);
+            if(keep || pastDetections.length===1) finalDetections.push(fb);
         });
         detections = finalDetections;
 
-        // Draw bounding boxes
-        detections.forEach(d => {
+        // draw boxes
+        detections.forEach(d=>{
             ctx.strokeStyle = LASER_COLOR;
             ctx.lineWidth = 2;
             ctx.strokeRect(d.x, d.y, d.w, d.h);
-            ctx.font = '16px sans-serif';
+            ctx.font='16px sans-serif';
             ctx.fillStyle = LASER_COLOR;
-            ctx.fillText('bird', d.x, d.y - 5);
+            ctx.fillText('bird', d.x, d.y-5);
         });
     }
 
-    // Draw lasers
+    // draw lasers
     const now = Date.now();
-    laserEvents = laserEvents.filter(e => e.expires > now);
-    laserEvents.forEach(e => {
-        const alpha = (e.expires - now)/LASER_DURATION;
+    laserEvents = laserEvents.filter(e=>e.expires>now);
+    laserEvents.forEach(e=>{
+        const alpha = (e.expires-now)/LASER_DURATION;
         drawLaser(canvas.width/2, canvas.height, e.cx, e.cy, alpha);
     });
 
@@ -146,7 +136,7 @@ async function detectFrame() {
 // --- FIRE LASER ---
 fireBtn.addEventListener('click', ()=>{
     const now = Date.now();
-    if(detections.length > 0){
+    if(detections.length>0){
         detections.forEach(d=>{
             laserEvents.push({cx:d.cx, cy:d.cy, expires: now+LASER_DURATION});
         });
@@ -154,6 +144,8 @@ fireBtn.addEventListener('click', ()=>{
         laserEvents.push({cx:canvas.width/2, cy:canvas.height/2, expires: now+LASER_DURATION});
     }
 });
+
+startBtn.addEventListener('click', startCamera);
 </script>
 </body>
 </html>
