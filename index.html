@@ -3,24 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bird Detector Laser</title>
+<title>Bird Detector Laser (YOLOv8 Worker)</title>
 <style>
-  body { display:flex; flex-direction: column; align-items:center; background:#000; color:#fff; font-family:sans-serif; margin:0; }
-  canvas { border:1px solid #0f0; margin-top:10px; }
-  button { margin-top:10px; padding:10px 20px; font-size:1.2em; border:none; border-radius:5px; cursor:pointer; background:#0f0; }
-  button:hover { background:#0c0; }
+body { display:flex; flex-direction: column; align-items:center; background:#000; color:#fff; font-family:sans-serif; margin:0; }
+canvas { border:1px solid #0f0; margin-top:10px; }
+button { margin-top:10px; padding:10px 20px; font-size:1.2em; border:none; border-radius:5px; cursor:pointer; background:#0f0; }
+button:hover { background:#0c0; }
 </style>
 </head>
 <body>
-<h1>Bird Detector Laser (Coco-SSD)</h1>
+<h1>Bird Detector Laser (YOLOv8 Worker)</h1>
 <button id="startCameraBtn">Start Camera</button>
 <video id="video" autoplay playsinline style="display:none;"></video>
 <canvas id="canvas"></canvas>
 <button id="fireLaser">Fire Laser</button>
-
-<!-- TensorFlow.js + Coco-SSD -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
 <script>
 const startBtn = document.getElementById('startCameraBtn');
@@ -33,33 +29,34 @@ let laserEvents = [];
 const LASER_DURATION = 350;
 const LASER_COLOR = 'lime';
 const LASER_THICKNESS = 3;
-let model;
 let detections = [];
-const pastDetections = [];
 
-// --- CAMERA ---
+let worker = new Worker('yoloWorker.js');
+
+worker.onmessage = (e) => {
+    const { type, birds } = e.data;
+    if(type === 'detections'){
+        detections = birds;
+    } else if(type==='loaded'){
+        console.log("✅ YOLOv8 Worker Loaded");
+    }
+};
+
 async function startCamera() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' }, audio:false });
         video.srcObject = stream;
 
-        video.addEventListener('loadedmetadata', async () => {
+        video.addEventListener('loadedmetadata', () => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            console.log(`Camera resolution: ${video.videoWidth}x${video.videoHeight}`);
-            startBtn.style.display = 'none';
-
-            // Load Coco-SSD
-            model = await cocoSsd.load();
-            console.log("✅ Coco-SSD loaded");
-
-            detectFrame(); // start detection loop
+            startBtn.style.display='none';
+            detectFrame();
         });
-
         await video.play();
-    } catch(err) {
-        console.error("Camera or model failed:", err);
-        alert("Camera access or model load failed. Make sure HTTPS and permissions are allowed.");
+    } catch(err){
+        console.error("Camera failed:", err);
+        alert("Camera access failed. Make sure HTTPS and permissions are allowed.");
     }
 }
 
@@ -83,44 +80,20 @@ function drawLaser(sx, sy, tx, ty, alpha){
 // --- DETECTION LOOP ---
 async function detectFrame(){
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    if(model){
-        const predictions = await model.detect(video);
-        let frameDetections = [];
-        predictions.forEach(p=>{
-            if(p.class.toLowerCase() === 'bird' && p.score > 0.4){
-                const {bbox} = p; // [x, y, width, height]
-                const [x, y, w, h] = bbox;
-                const cx = x + w/2;
-                const cy = y + h/2;
-                frameDetections.push({x, y, w, h, cx, cy});
-            }
-        });
 
-        // --- SMOOTH DETECTIONS ---
-        pastDetections.push(frameDetections);
-        if(pastDetections.length > 3) pastDetections.shift();
-        const finalDetections = [];
-        frameDetections.forEach(fb=>{
-            let keep=false;
-            pastDetections.forEach(frames=>{
-                frames.forEach(f=>{
-                    if(Math.abs(f.cx - fb.cx)<30 && Math.abs(f.cy - fb.cy)<30) keep=true;
-                });
-            });
-            if(keep || pastDetections.length===1) finalDetections.push(fb);
-        });
-        detections = finalDetections;
+    // send current frame to worker
+    const bitmap = ctx.getImageData(0,0,canvas.width,canvas.height);
+    worker.postMessage({ imageData: bitmap });
 
-        // draw boxes
-        detections.forEach(d=>{
-            ctx.strokeStyle = LASER_COLOR;
-            ctx.lineWidth = 2;
-            ctx.strokeRect(d.x, d.y, d.w, d.h);
-            ctx.font='16px sans-serif';
-            ctx.fillStyle = LASER_COLOR;
-            ctx.fillText('bird', d.x, d.y-5);
-        });
-    }
+    // draw detections
+    detections.forEach(d=>{
+        ctx.strokeStyle = LASER_COLOR;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(d.x, d.y, d.w, d.h);
+        ctx.font='16px sans-serif';
+        ctx.fillStyle = LASER_COLOR;
+        ctx.fillText('bird', d.x, d.y-5);
+    });
 
     // draw lasers
     const now = Date.now();
